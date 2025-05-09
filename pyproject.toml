@@ -1,0 +1,17 @@
+[tool.poetry]
+name = "video-rag-frontend"
+version = "0.1.0"
+description = "Streamlit frontend for video player and website browser"
+authors = ["Your Name <you@example.com>"] # 请替换为您的信息
+readme = "README.md"
+package-mode = false # 禁用包模式
+
+[tool.poetry.dependencies]
+python = ">=3.10,<3.13" # 假设使用 Python 3.8 或更高版本
+streamlit = "^1.36.0" # Streamlit 的版本可以根据需要调整
+fastapi = "^0.111.1" # FastAPI 作为常规依赖
+uvicorn = {extras = ["standard"], version = "^0.20.0"} # 添加 uvicorn, 包含标准依赖
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
