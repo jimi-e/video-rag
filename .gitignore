@@ -172,3 +172,15 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Docker volumes and data
+docker/volumes/
+docker/nginx/conf.d/default.conf
+docker/.env
+
+# Environment files
+.env
+
+# Logs and cache
+*.log
+.cache/

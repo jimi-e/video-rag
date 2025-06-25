@@ -1,10 +1,17 @@
 import streamlit as st
 import os
 import requests # requests を追加してバックエンド API を呼び出す
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # FastAPI バックエンド URL
-BACKEND_BASE_URL = "http://34.133.158.81:12002" # あなたの実際のバックエンドURLに置き換えてください
+BACKEND_BASE_URL = os.getenv("BACKEND_BASE_URL", "http://localhost:12001")  # デフォルト値を設定
 BACKEND_VIDEO_URL_BASE = f"{BACKEND_BASE_URL}/videos"
+
+# Video RAG Chatbot URL
+VIDEO_RAG_IFRAME_URL = os.getenv("VIDEO_RAG_IFRAME_URL", "http://34.133.158.81/chatbot/QsQtD5w0SeNFrcup")
 
 # 関数：バックエンドからビデオリストを取得
 def get_video_list_from_backend():
@@ -54,13 +61,11 @@ with col1:
 
 with col2:
     st.header("Video RAG")
-    iframe_html = (
-                                """<iframe
-                                    src="http://34.133.158.81/chatbot/QsQtD5w0SeNFrcup"
-                                    style="width: 100%; height: 100%; min-height: 700px"
-                                    frameborder="0"
-                                    allow="microphone">
-                                </iframe>"""
-                            )
+    iframe_html = f"""<iframe
+                        src="{VIDEO_RAG_IFRAME_URL}"
+                        style="width: 100%; height: 100%; min-height: 700px"
+                        frameborder="0"
+                        allow="microphone">
+                    </iframe>"""
     st.markdown(iframe_html, unsafe_allow_html=True)
 
