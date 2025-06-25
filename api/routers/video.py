@@ -9,7 +9,7 @@ router = APIRouter(
 )
 
 # 更新视频文件存储路径
-VIDEO_STORAGE_PATH = "/home/syh/work-d/video-rag/source/videos"
+VIDEO_STORAGE_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "source", "videos")
 
 @router.get("/list", response_model=List[str])
 async def list_videos():

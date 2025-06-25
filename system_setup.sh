@@ -7,6 +7,9 @@ set -e  # Exit immediately if a command exits with a non-zero status
 set -u  # Treat unset variables as an error
 set -o pipefail  # Return exit status of the last command in the pipe that failed
 
+# Check if this is a restarted script (to avoid infinite loops)
+DOCKER_GROUP_REFRESHED=${DOCKER_GROUP_REFRESHED:-false}
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -163,35 +166,110 @@ else
 fi
 
 # Pull required AI model
-log "Pulling Qwen3:7b model (this may take a while)..."
-run_cmd "ollama pull qwen3:7b" "Qwen3:7b model download"
+log "Pulling Qwen3:14b model (this may take a while)..."
+run_cmd "ollama pull qwen3:14b" "Qwen3:14b model download"
 
-# Install Docker Compose
-log "Installing Docker Compose..."
-if command_exists docker-compose; then
-    log "Docker Compose is already installed: $(docker-compose --version)"
-else
-    if run_cmd "sudo curl -SL https://github.com/docker/compose/releases/download/v2.29.6/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose" "Docker Compose download"; then
-        run_cmd "sudo chmod +x /usr/local/bin/docker-compose" "Setting Docker Compose permissions"
-        run_cmd "sudo ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose" "Creating Docker Compose symlink"
+# Configure Ollama to listen on all interfaces for Docker containers
+log "Configuring Ollama for Docker container access..."
+if [ -f "/etc/systemd/system/ollama.service" ]; then
+    log "Configuring Ollama systemd service..."
+    run_cmd "sudo mkdir -p /etc/systemd/system/ollama.service.d" "Create Ollama service override directory"
+    
+    # Create override configuration
+    cat << 'EOF' | sudo tee /etc/systemd/system/ollama.service.d/override.conf
+[Service]
+Environment="OLLAMA_HOST=0.0.0.0"
+EOF
+    
+    if [ $? -eq 0 ]; then
+        log "Ollama override configuration created successfully"
+        run_cmd "sudo systemctl daemon-reload" "Reload systemd daemon"
+        run_cmd "sudo systemctl restart ollama" "Restart Ollama service"
         
-        # Verify Docker Compose installation
-        if command_exists docker-compose; then
-            log "Docker Compose installed successfully: $(docker-compose --version)"
+        # Wait a moment for service to start
+        sleep 3
+        
+        # Verify Ollama service status
+        if sudo systemctl is-active --quiet ollama; then
+            log "Ollama service is running and configured for Docker access"
         else
-            error "Docker Compose installation verification failed"
-            exit 1
+            warning "Ollama service may not be running properly"
+            run_cmd "sudo systemctl status ollama" "Check Ollama service status"
         fi
     else
-        error "Docker Compose installation failed"
+        error "Failed to create Ollama override configuration"
+        exit 1
+    fi
+else
+    log "Ollama is not running as a systemd service, starting manually with network binding..."
+    # Kill any existing ollama processes
+    pkill ollama || true
+    sleep 2
+    
+    # Start Ollama with network binding in background
+    log "Starting Ollama server with network binding..."
+    OLLAMA_HOST=0.0.0.0 nohup ollama serve > "$LOG_DIR/ollama.log" 2>&1 &
+    
+    # Wait for Ollama to start
+    sleep 5
+    
+    # Test if Ollama is responding
+    if curl -s http://localhost:11434/api/version >/dev/null; then
+        log "Ollama is running and accessible"
+    else
+        error "Failed to start Ollama server"
         exit 1
     fi
 fi
 
+# Install Docker Engine using snap (no sudo required for usage)
+log "Installing Docker Engine via snap..."
+if command_exists docker; then
+    log "Docker is already installed: $(docker --version)"
+    # Check if docker works without sudo
+    if ! docker ps >/dev/null 2>&1 && [ "$DOCKER_GROUP_REFRESHED" = "false" ]; then
+        log "Docker requires group permission refresh..."
+        # Apply group changes without logout
+        run_cmd "sudo adduser $USER docker" "Ensure user is in docker group"
+        # Refresh group membership for current session
+        log "Restarting script with docker group permissions..."
+        export DOCKER_GROUP_REFRESHED=true
+        exec sg docker "$0 $*"
+    fi
+else
+    # Install Docker via snap (classic mode for full functionality)
+    run_cmd "sudo snap install docker" "Install Docker via snap"
+    
+    # Add current user to docker group (snap creates the group automatically)
+    run_cmd "sudo adduser $USER docker" "Add user to docker group"
+    
+    log "Docker installed successfully via snap."
+    log "Refreshing group permissions..."
+    
+    # Restart the script with new group permissions
+    export DOCKER_GROUP_REFRESHED=true
+    exec sg docker "$0 $*"
+fi
+
+# Docker Compose is included with snap Docker installation
+log "Verifying Docker Compose availability..."
+if command_exists docker-compose; then
+    log "Docker Compose is available: $(docker-compose --version)"
+elif docker compose version >/dev/null 2>&1; then
+    log "Docker Compose is available as 'docker compose': $(docker compose version)"
+    # Create a symlink for backward compatibility
+    if [ ! -f "/usr/local/bin/docker-compose" ]; then
+        run_cmd "sudo ln -sf /snap/bin/docker /usr/local/bin/docker-compose" "Create docker-compose symlink"
+    fi
+else
+    error "Docker Compose is not available"
+    exit 1
+fi
+
 # Setup Docker environment
 log "Setting up Docker environment..."
-if [ -d "docker" ]; then
-    cd docker
+if [ -d "$HOME/video-rag/docker" ]; then
+    cd $HOME/video-rag/docker
     
     if [ ! -f ".env" ]; then
         if [ -f ".env.example" ]; then
@@ -207,7 +285,7 @@ if [ -d "docker" ]; then
     
     # Start Docker services
     log "Starting Docker services..."
-    run_cmd "docker-compose up -d" "Docker services startup"
+    run_cmd "docker compose up -d" "Docker services startup"
     
     cd ..
 else
@@ -218,7 +296,7 @@ fi
 log "Performing final verification..."
 
 # Check all required commands
-required_commands=("python3" "pip3" "poetry" "ffmpeg" "ollama" "docker-compose")
+required_commands=("python3" "pip3" "poetry" "ffmpeg" "ollama" "docker" "docker-compose")
 for cmd in "${required_commands[@]}"; do
     if command_exists "$cmd"; then
         log "✓ $cmd is available"
@@ -227,6 +305,23 @@ for cmd in "${required_commands[@]}"; do
         exit 1
     fi
 done
+
+# Test Ollama network accessibility
+log "Testing Ollama network accessibility..."
+if curl -s http://localhost:11434/api/version >/dev/null; then
+    log "✓ Ollama is accessible on localhost:11434"
+    
+    # Test if accessible from Docker bridge network
+    if curl -s --connect-timeout 5 http://172.17.0.1:11434/api/version >/dev/null 2>&1; then
+        log "✓ Ollama is accessible from Docker containers (172.17.0.1:11434)"
+    else
+        warning "Ollama may not be accessible from Docker containers"
+        log "You may need to configure firewall or check network settings"
+    fi
+else
+    error "✗ Ollama is not responding on localhost:11434"
+    exit 1
+fi
 
 log "=== Video-RAG System Setup Completed Successfully! ==="
 log "All required components have been installed and configured."
